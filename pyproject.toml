@@ -1,0 +1,19 @@
+[project]
+name = "mari-dataset"
+version = "1.0.0"
+description = "MARI: Music Add Remove Instruction dataset."
+authors = [
+	{ name = "Hugo Bachér" },
+]
+license = "CC BY-NC-SA 4.0"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.4.3",
+    "pandas>=3.0.1",
+    "soundfile>=0.13.1",
+    "tqdm>=4.67.3",
+]
+
+[project.urls]
+Repository = "https://github.com/Cactooz/MARI.git"
+Dataset = "https://huggingface.co/datasets/Cactooz/MARI"
