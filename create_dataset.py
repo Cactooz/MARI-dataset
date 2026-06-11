@@ -11,7 +11,7 @@ from itertools import combinations
 from audio_utils import mix_tracks
 from generate_instructions import generate_instruction
 from config import (
-	MOISES_FOLDER, SONGS_FOLDER, DATASET_PATH, MAX_LENGTH,
+	MOISES_FOLDER, SONGS_FOLDER, DATASET_PATH, MAX_LENGTH, SEED,
 	STEMS, TAXONOMY_MAPPING, MANUAL_MAPPINGS,
 	MAX_STEMS_MIX, MAX_PARTIALS_PER_STEM, MAX_PARTIAL_COMBO_SIZE
 )
@@ -258,6 +258,7 @@ def build_entries(
 	return entries
 
 def create_dataset():
+	random.seed(SEED)
 	SONGS_FOLDER.mkdir(parents=True, exist_ok=True)
 
 	all_songs: list[dict] = []

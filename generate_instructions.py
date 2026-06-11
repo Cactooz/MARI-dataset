@@ -1,5 +1,9 @@
 import random
 
+from config import SEED
+
+random.seed(SEED)
+
 OPERATION_WEIGHTS: dict[str, dict[str, float]] = {
 	"ADD": {
 		"Add": 0.29, "Include": 0.14, "Layer": 0.11, "": 0.10, "Insert": 0.07,
