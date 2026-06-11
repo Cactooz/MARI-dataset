@@ -1,7 +1,8 @@
 [project]
 name = "mari-dataset"
 version = "1.0.0"
-description = "MARI: Music Add Remove Instruction dataset."
+description = "MARI: Music Add Remove Instruction dataset to instruction-tune and evaluate text-to-music models."
+readme = "README.md"
 authors = [
 	{ name = "Hugo Bachér" },
 ]
