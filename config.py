@@ -3,7 +3,7 @@ from pathlib import Path
 MOISES_FOLDER = Path('~/moises/songs').expanduser()
 OUTPUT_FOLDER = Path('~/mari-dataset').expanduser()
 SONGS_FOLDER = OUTPUT_FOLDER / "songs"
-DATASET_PATH = OUTPUT_FOLDER / "dataset.parquet"
+DATASET_PATH = OUTPUT_FOLDER / "mari-dataset.parquet"
 
 SAMPLE_RATE = 44100
 MAX_LENGTH = 190 * SAMPLE_RATE
@@ -13,6 +13,10 @@ SILENCE_THRESHOLD = 1e-4
 MAX_STEMS_MIX = 4
 MAX_PARTIALS_PER_STEM = 1
 MAX_PARTIAL_COMBO_SIZE = 1
+
+SEED = 0
+EVAL_SIZE = 1000
+MIN_PER_STEM_COMBO = 5
 
 TAXONOMY_MAPPING: dict[str, list[str]] = {
 	"bass_guitar": ["Bass guitar", "Electric bass", "Electric bass guitar"],
