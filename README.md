@@ -1,16 +1,16 @@
 # MARI Dataset
 
-Scripts for building the **Music Add Remove Instruction (MARI)** dataset.
+Scripts for building the **Music Add Remove Instruction (MARI) dataset**.
 The dataset is used to instruction-tune and evaluate text-to-music models for _ADD_ and _REMOVE_ editing operations.
 
 The dataset is built using the [MoisesDB](https://music.ai/blog/press/introducing-moisesdb-the-ultimate-multitrack-dataset-for-source-separation-beyond-4-stems/) multitrack dataset.
-The dataset parquet file and the evaluation mixes are published on [Hugging Face](https://huggingface.co/datasets/Cactooz/MARI).
+The dataset parquet file and the evaluation mixes are published on [Hugging Face](https://huggingface.co/datasets/Cactooz/MARI-dataset).
 The training mixes are not premixed and must be computed locally with `compute_files.py`.
 
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) (manages the Python 3.11+ environment automatically).
-- The MARI dataset from [Hugging Face](https://huggingface.co/datasets/Cactooz/MARI), with parquet file and evaluation mixes.
+- The MARI dataset from [Hugging Face](https://huggingface.co/datasets/Cactooz/MARI-dataset), with parquet file and evaluation mixes.
 - The [MoisesDB](https://developer.moises.ai/research) multitrack dataset required to compute the training mixes. Not needed if you only evaluate using the provided evaluation mixes.
 
 ## Setup
@@ -50,13 +50,13 @@ uv run compute_files.py --force      # recompute even if files exist
 ### Usage
 
 Download the parquet file and the evaluation mixes from
-[Hugging Face](https://huggingface.co/datasets/Cactooz/MARI), then run `compute_files.py` to create the training mixes locally.
+[Hugging Face](https://huggingface.co/datasets/Cactooz/MARI-dataset), then run `compute_files.py` to create the training mixes locally.
 Always use the published parquet and evaluation mixes so everyone evaluates against the exact same dataset.
 
 `create_dataset.py` and `create_testset.py` are only used to create the dataset from MoisesDB and are not part of the normal workflow.
 
 ## License
 
-`MARI dataset` and `MoisesDB` are distributed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0).
+`MARI-dataset` and `MoisesDB` are distributed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0).
 
-For the complete license, visit: https://creativecommons.org/licenses/by-nc-sa/4.0/
+For the complete license, see: https://creativecommons.org/licenses/by-nc-sa/4.0/

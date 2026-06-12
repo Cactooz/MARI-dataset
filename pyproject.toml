@@ -16,5 +16,5 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/Cactooz/MARI.git"
-Dataset = "https://huggingface.co/datasets/Cactooz/MARI"
+Repository = "https://github.com/Cactooz/MARI-dataset.git"
+Dataset = "https://huggingface.co/datasets/Cactooz/MARI-dataset"
