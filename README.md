@@ -27,7 +27,6 @@ Paths and parameters are found in `config.py`. By default:
 
 Either match this layout or edit `config.py` to point elsewhere.
 
-
 ## Scripts
 
 | Script | Purpose |
@@ -54,6 +53,27 @@ Download the parquet file and the evaluation mixes from
 Always use the published parquet and evaluation mixes so everyone evaluates against the exact same dataset.
 
 `create_dataset.py` and `create_testset.py` are only used to create the dataset from MoisesDB and are not part of the normal workflow.
+
+## Authors
+
+- **Hugo Bachér**: Main Author - KTH Royal Institute of Technology
+- **Mauro Luzzatto**: Industry Collaborator - Epidemic Sound
+
+## Citing
+
+If you use the `MARI-dataset` for your research, please cite the following:
+
+```bibtex
+@misc{bacher2026mari,
+    title = {{MARI: Music Add Remove Instruction Dataset}},
+    author = {Hugo Bachér and Mauro Luzzatto},
+    year = {2026},
+    month = jun,
+    version = {1.0},
+    url = {https://huggingface.co/datasets/Cactooz/MARI-dataset},
+    note = {{Code available: \url{https://github.com/Cactooz/MARI-dataset}}}
+}
+```
 
 ## License
 
