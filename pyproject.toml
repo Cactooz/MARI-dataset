@@ -5,6 +5,7 @@ description = "MARI: Music Add Remove Instruction dataset to instruction-tune an
 readme = "README.md"
 authors = [
 	{ name = "Hugo Bachér" },
+	{ name = "Mauro Luzzatto" },
 ]
 license = "Apache-2.0"
 requires-python = ">=3.11"

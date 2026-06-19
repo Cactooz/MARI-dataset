@@ -61,17 +61,28 @@ Always use the published parquet and evaluation mixes so everyone evaluates agai
 
 ## Citing
 
-If you use the `MARI-dataset` for your research, please cite the following:
+If you use the `MARI-dataset` for your research, please cite the dataset and the master's thesis that introduced it:
 
 ```bibtex
 @misc{bacher2026mari,
     title = {{MARI: Music Add Remove Instruction Dataset}},
     author = {Hugo Bachér and Mauro Luzzatto},
     year = {2026},
-    month = jun,
+    month = {June},
     version = {1.0},
+    howpublished = {Hugging Face},
+    doi = {10.57967/hf/10585},
     url = {https://huggingface.co/datasets/Cactooz/MARI-dataset},
     note = {{Code available: \url{https://github.com/Cactooz/MARI-dataset}}}
+}
+@mastersthesis{bacher2026thesis,
+    title = {{From Music Generation to Music Editing: Instruction-Tuning Text-to-Music Diffusion Models}},
+    author = {Hugo Bachér},
+    school = {KTH Royal Institute of Technology},
+    year = {2026},
+    month = {June},
+    address = {Stockholm, Sweden},
+    type = {Master's thesis}
 }
 ```
 
