@@ -77,6 +77,8 @@ If you use the `MARI-dataset` for your research, please cite the following:
 
 ## License
 
-`MARI-dataset` and `MoisesDB` are distributed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0).
+`MARI-dataset` code in this repository is licensed under the Apache License, Version 2.0 (Apache-2.0).
 
-For the complete license, see: https://creativecommons.org/licenses/by-nc-sa/4.0/
+`MARI-dataset` data and `MoisesDB` are distributed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0).
+
+For the complete licenses, see: https://www.apache.org/licenses/LICENSE-2.0 and https://creativecommons.org/licenses/by-nc-sa/4.0/.
