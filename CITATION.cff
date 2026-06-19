@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use the MARI dataset in your research, please cite it as below."
+type: software
+title: "MARI-dataset: code to build the MARI dataset"
+version: "1.0.0"
+license: Apache-2.0
+repository-code: "https://github.com/Cactooz/MARI-dataset"
+authors:
+  - family-names: Bachér
+    given-names: Hugo
+    orcid: "https://orcid.org/0009-0006-2848-8804"
+    affiliation: KTH Royal Institute of Technology
+  - family-names: Luzzatto
+    given-names: Mauro
+    orcid: "https://orcid.org/0009-0007-0204-8517"
+    affiliation: Epidemic Sound
+preferred-citation:
+  type: data
+  title: "MARI: Music Add Remove Instruction Dataset"
+  version: "1.0"
+  year: 2026
+  month: 6
+  license: CC-BY-NC-SA-4.0
+  publisher:
+    name: Hugging Face
+  doi: 10.57967/hf/10585
+  url: "https://huggingface.co/datasets/Cactooz/MARI-dataset"
+  authors:
+    - family-names: Bachér
+      given-names: Hugo
+      orcid: "https://orcid.org/0009-0006-2848-8804"
+      affiliation: KTH Royal Institute of Technology
+    - family-names: Luzzatto
+      given-names: Mauro
+      orcid: "https://orcid.org/0009-0007-0204-8517"
+      affiliation: Epidemic Sound
