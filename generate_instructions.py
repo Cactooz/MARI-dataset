@@ -6,14 +6,14 @@ random.seed(SEED)
 
 OPERATION_WEIGHTS: dict[str, dict[str, float]] = {
 	"ADD": {
-		"Add": 0.29, "Include": 0.14, "Layer": 0.11, "": 0.10, "Insert": 0.07,
-		"Plus": 0.07, "Introduce": 0.06, "Mix": 0.04, "Integrate": 0.03,
-		"Incorporate": 0.03, "Apply": 0.02, "Stack": 0.02, "Inject": 0.02,
+		"Add": 0.60, "Include": 0.10, "Layer": 0.08, "Insert": 0.06,
+		"Plus": 0.05, "Introduce": 0.04, "Integrate": 0.03,
+		"Incorporate": 0.02, "Stack": 0.02
 	},
 	"REMOVE": {
-		"Remove": 0.29, "Mute": 0.14, "Delete": 0.11, "Exclude": 0.08,
-		"Cut": 0.06, "Silence": 0.06, "Eliminate": 0.05, "Strip": 0.05,
-		"Minus": 0.05, "Omit": 0.04, "Kill": 0.03, "Filter": 0.02, "Ditch": 0.02,
+		"Remove": 0.60, "Mute": 0.10, "Delete": 0.08, "Cut": 0.06,
+		"Silence": 0.05, "Eliminate": 0.04, "Strip": 0.03,
+		"Minus": 0.02, "Kill": 0.02
 	},
 }
 
@@ -22,8 +22,8 @@ def generate_instruction(
 		instruments: list[str], 
 		genre: str | None = None,
 		operation_append_percent: float = 0.2,
-		genre_percent: float = 0.2,
-		and_comma_percent: float = 0.2,
+		genre_percent: float = 0.3,
+		and_comma_percent: float = 0.1,
 		shuffle_percent: float = 0.2,
 		lowercase_percent: float = 0.8,
 	) -> str:
