@@ -1,10 +1,10 @@
 import re
 import random
 import argparse
-import numpy as np
 import pandas as pd
 from typing import Any
 from pathlib import Path
+from dataset_utils import as_list, save_dataset
 from config import DATASET_PATH, SEED
 
 OPERATION_VERBS: dict[str, dict[str, float]] = {
@@ -69,9 +69,9 @@ ARTICLE_PERCENT = 0.30
 ARTICLE_OPERATIONS = {"ADD", "ACCOMPANY"}
 
 OPERATION_PREPOSITIONS: dict[str, str] = {
-    "ADD": "to",
-    "REMOVE": "from",
-    "EXTRACT": "from"
+	"ADD": "to",
+	"REMOVE": "from",
+	"EXTRACT": "from"
 }
 PREPOSITIONS: dict[str, str] = {
 	"Include": "in",
@@ -93,9 +93,9 @@ JOIN_STYLES: dict[str, float] = {
 }
 
 COMPLETE_NOUNS: dict[str, float] = {
-    "song": 0.60,
-    "track": 0.30,
-    "mix": 0.10
+	"song": 0.60,
+	"track": 0.30,
+	"mix": 0.10
 }
 COMPLETE_INSTRUMENTS_PERCENT = 0.40
 COMPLETE_NO_TAGS_PERCENT = 0.50
@@ -197,8 +197,8 @@ def generate_sentence_instruction(
 	return fix_article(instruction.replace("  ", " "))
 
 def generate_instruction(
-		operation: str, 
-		instruments: list[str], 
+		operation: str,
+		instruments: list[str],
 		genre: str | None = None,
 		moods: list[str] | None = None,
 		detailed_instruments: list[str] | None = None,
@@ -214,11 +214,13 @@ def generate_instruction(
 		instruments = [instrument for instrument in detailed_instruments]
 	if operation == "COMPLETE":
 		return generate_complete_instruction(instruments, genre, moods, lowercase_percent=lowercase_percent)
+	if not instruments:
+		raise ValueError(f"No instruments for the {operation} instruction")
 
 	instruction_parts = []
 	instruction_elements = []
 
-	if operation in INSTRUCTION_TEMPLATES and instruments and random.random() < TEMPLATE_PERCENT:
+	if operation in INSTRUCTION_TEMPLATES and random.random() < TEMPLATE_PERCENT:
 		mood = random.choice(moods) if moods and random.random() < mood_percent else None
 		genre_tag = genre if genre and random.random() < genre_percent else None
 		sentence = generate_sentence_instruction(operation, instruments, genre_tag, mood)
@@ -240,10 +242,7 @@ def generate_instruction(
 
 	if moods and random.random() < mood_percent:
 		instruction_elements.append(random.choice(moods))
- 
-	if len(instruments) <= 0:
-		print("Error: No instruments provided")
-	
+
 	random.shuffle(instruments)
 	instruction_elements.append(join_instruments(instruments))
 
@@ -252,16 +251,11 @@ def generate_instruction(
 
 	instruction_parts.extend(instruction_elements)
 	instruction = " ".join(instruction_parts).strip()
-	
+
 	if random.random() < lowercase_percent:
 		instruction = instruction.lower()
 
 	return instruction
-
-def as_list(value) -> list[str] | None:
-	if isinstance(value, (list, tuple, np.ndarray)):
-		return list(value) or None
-	return None
 
 def add_instructions(df: pd.DataFrame) -> pd.DataFrame:
 	random.seed(SEED)
@@ -284,7 +278,7 @@ def main():
 	args = parser.parse_args()
 
 	df = add_instructions(pd.read_parquet(args.dataset))
-	df.to_parquet(args.dataset, index=False, compression="zstd", compression_level=9)
+	save_dataset(df, args.dataset)
 	print(f"Saved {len(df)} instructions to {args.dataset}.")
 
 if __name__ == "__main__":
