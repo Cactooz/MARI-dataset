@@ -3,30 +3,112 @@ from pathlib import Path
 MOISES_FOLDER = Path('~/moises/songs').expanduser()
 OUTPUT_FOLDER = Path('~/mari-dataset').expanduser()
 SONGS_FOLDER = OUTPUT_FOLDER / "songs"
-DATASET_PATH = OUTPUT_FOLDER / "mari-dataset.parquet"
+DATASET_PATH = OUTPUT_FOLDER / "marix-dataset.parquet"
+PAIRS_PATH = OUTPUT_FOLDER / "marix-pairs.parquet"
 
 SAMPLE_RATE = 44100
 MAX_LENGTH = 380 * SAMPLE_RATE
 
-SILENCE_THRESHOLD = 1e-4
+OUTPUT_SUBTYPE = "PCM_24"
 
-MAX_STEMS_MIX = 4
+MAX_STEMS_MIX = 5
 MAX_PARTIALS_PER_STEM = 1
 MAX_PARTIAL_COMBO_SIZE = 1
 
 SEED = 0
-EVAL_SIZE = 1000
 EVAL_SONGS = 85
-MIN_PER_STEM_COMBO = 5
-MIN_PER_INSTRUMENT_TYPE = 10
-MAX_EVAL_ROWS_PER_SONG = 16
+EVAL_PAIRS = 500
+EVAL_PAIRS_PER_SONG = 6
 
-GENRE_BALANCE = 0.4
+STEM_BALANCE = 0.4
 MAX_EVAL_FRACTION_PER_GENRE = 0.8
 MAX_EVAL_SONGS_PER_GENRE = 16
 ROW_PENALTY = 0.5
 
-SKIP_SILENCE_CHECK = False
+TARGET_RMS = 0.1
+ACTIVE_GATE_DB = -60.0
+PEAK_TARGET = 0.99
+EPS = 1e-10
+FRAME_LENGTH = 2048
+HOP_LENGTH = 512
+
+CROP_WINDOWS = (30, 47, 190)
+CROP_MIN_EDIT_SECONDS = 20.0
+CROP_ACTIVITY_ALPHA = 0.5
+CROP_COVERAGE_WEIGHT = 0.5
+
+DEFAULT_ROLE = "rhythm_harmony"
+DEFAULT_TIER = 1
+
+GENRE_TIERS: dict[str, int] = {
+	"blues": 1,
+	"bossa_nova": 3,
+	"country": 1,
+	"electronic": 2,
+	"jazz": 3,
+	"musical_theatre": 5,
+	"pop": 1,
+	"rap": 2,
+	"reggae": 4,
+	"rock": 4,
+	"singer_songwriter": 1,
+	"world_folk": 1,
+}
+
+TIER_OFFSETS: dict[int, dict[str, float]] = {
+	1: {"lead_vocal": 0, "lead_inst": -2.5, "bass": -4.5, "drums": -5.0,
+		"backing_vocal": -6.5, "rhythm_harmony": -8.0, "pads_atmos_fx": -10},
+	2: {"lead_vocal": 0, "lead_inst": -1.0, "bass": -1.0, "drums": -1.0,
+		"backing_vocal": -5.0, "rhythm_harmony": -5.5, "pads_atmos_fx": -6.0},
+	3: {"lead_vocal": 0, "lead_inst": 0, "bass": -3.5, "drums": -4.0,
+		"backing_vocal": -5.5, "rhythm_harmony": -5.0, "pads_atmos_fx": -8.5},
+	4: {"lead_vocal": 0, "lead_inst": -1.5, "bass": -1.5, "drums": -1.5,
+		"backing_vocal": -6.0, "rhythm_harmony": -4.5, "pads_atmos_fx": -9.5},
+	5: {"lead_vocal": 0, "lead_inst": -1.5, "bass": -3.0, "drums": -3.0,
+		"backing_vocal": -1.5, "rhythm_harmony": -4.0, "pads_atmos_fx": -8.0},
+}
+
+TRACKTYPE_MIX: dict[str, tuple[str, str]] = {
+	"acoustic_guitar": ("rhythm_harmony", "acoustic_guitar"),
+	"background_vocals": ("backing_vocal", "backing_vocal"),
+	"banjo,_mandolin,_ukulele,_harp_etc": ("rhythm_harmony", "chordophone"),
+	"bass_guitar": ("bass", "bass"),
+	"bass_synthesizer_(moog_etc)": ("bass", "bass"),
+	"brass_(trumpet,_trombone,_french_horn,_brass_etc)": ("rhythm_harmony", "brass"),
+	"cello_(solo)": ("lead_inst", "lead_inst"),
+	"cello_section": ("rhythm_harmony", "cello_section"),
+	"clean_electric_guitar": ("rhythm_harmony", "clean_electric_guitar"),
+	"contrabass/double_bass_(bass_of_instrings)": ("bass", "bass"),
+	"cymbals": ("drums", "drums"),
+	"distorted_electric_guitar": ("rhythm_harmony", "distorted_electric_guitar"),
+	"drum_machine": ("drums", "drums"),
+	"electric_piano_(rhodes,_wurlitzer,_piano_sound_alike)": ("rhythm_harmony", "electric_piano"),
+	"flutes_(piccolo,_bamboo_flute,_panpipes,_flutes_etc)": ("rhythm_harmony", "flutes"),
+	"full_acoustic_drumkit": ("drums", "drums"),
+	"grand_piano": ("rhythm_harmony", "grand_piano"),
+	"hi_hat": ("drums", "drums"),
+	"kick_drum": ("drums", "drums"),
+	"lead_female_singer": ("lead_vocal", "lead_vocal"),
+	"lead_male_singer": ("lead_vocal", "lead_vocal"),
+	"organ,_electric_organ": ("rhythm_harmony", "organ"),
+	"other_sounds_(hapischord,_melotron_etc)": ("rhythm_harmony", "keyboard"),
+	"other_strings": ("rhythm_harmony", "other_strings"),
+	"other_wind": ("rhythm_harmony", "other_wind"),
+	"reeds_(saxophone,_clarinets,_oboe,_english_horn,_bagpipe)": ("rhythm_harmony", "reeds"),
+	"snare_drum": ("drums", "drums"),
+	"string_section": ("rhythm_harmony", "string_section"),
+	"synth_lead": ("lead_inst", "lead_inst"),
+	"synth_pad": ("pads_atmos_fx", "synth_pad"),
+	"toms": ("drums", "drums"),
+	"viola_(solo)": ("lead_inst", "lead_inst"),
+	"viola_section": ("rhythm_harmony", "viola_section"),
+}
+
+DRUM_KEYWORDS = (
+	"drum", "percussion", "kick", "snare", "tom", "hihat", "hi-hat", "cymbal",
+	"shaker", "tambourine", "clap", "conga", "bongo", "cowbell", "timpani",
+	"woodblock", "djembe",
+)
 
 TAXONOMY_MAPPING: dict[str, list[str]] = {
 	"bass_guitar": ["Bass guitar", "Electric bass", "Electric bass guitar"],
@@ -38,9 +120,9 @@ TAXONOMY_MAPPING: dict[str, list[str]] = {
 	"toms": ["Tom drum", "Tom", "Tomtom"],
 	"acoustic_guitar": ["Acoustic guitar", "Guitar"],
 	"background_vocals": ["Background vocals"],
-	"hi_hat": ["Hi hat", "Hihat"],
+	"hi_hat": ["Hi hat", "Hihat", "Hi-hat"],
 	"a-tonal_percussion_(claps,_shakers,_congas,_cowbell_etc)": ["A-tonal percussion"],
-	"grand_piano": ["Grand piano", "Piano"],
+	"grand_piano": ["Grand piano", "Piano", "Acoustic piano"],
 	"cymbals": ["Cymbal"],
 	"lead_female_singer": ["Lead female singer", "Lead female vocal", "Female vocal", "Female singer"],
 	"synth_lead": ["Synth lead", "Synthesizer lead"],
@@ -54,7 +136,7 @@ TAXONOMY_MAPPING: dict[str, list[str]] = {
 	"pitched_percussion_(mallets,_glockenspiel,_...)": ["Pitched percussion"],
 	"brass_(trumpet,_trombone,_french_horn,_brass_etc)": ["Brass"],
 	"reeds_(saxophone,_clarinets,_oboe,_english_horn,_bagpipe)": ["Reed"],
-	"contrabass/double_bass_(bass_of_instrings)": ["Contrabass", "Double bass"],
+	"contrabass/double_bass_(bass_of_instrings)": ["Contrabass", "Double bass", "Upright bass"],
 	"banjo,_mandolin,_ukulele,_harp_etc": ["Chordophone"],
 	"flutes_(piccolo,_bamboo_flute,_panpipes,_flutes_etc)": ["Flute"],
 	"cello_(solo)": ["Cello solo", "Cello"],
@@ -80,9 +162,9 @@ MANUAL_MAPPINGS: dict[str, str] = {
 	"2452461a-a379-40da-bba1-bac7a6d1439e": "Shaker",
 	"26668116-0548-4592-95e3-2f51f875197e": "Tambourine",
 	"298379b4-f441-4946-b6c8-e33288809d1d": "Shaker",
-	"29986e33-2ab8-46f1-92c7-89a2de833444": "Tanbourine",
+	"29986e33-2ab8-46f1-92c7-89a2de833444": "Tambourine",
 	"29b91d75-aa5c-4c6f-a3c2-45fcc1faecb2": "Shaker",
-	"29e17a1b-4c4a-48db-97e2-e7df2e3af447": "Timpani, triangle and cymblas",
+	"29e17a1b-4c4a-48db-97e2-e7df2e3af447": "Timpani, triangle and cymbals",
 	"2a34eba7-b924-4bd8-b41a-604194aabeeb": "Shaker",
 	"2e5dbecf-4d9a-4bc4-8caa-a84a247fc665": "Shaker",
 	"317b6f6d-245e-49c4-adc2-269b4f842653": "Tambourine",
@@ -186,17 +268,17 @@ MANUAL_MAPPINGS: dict[str, str] = {
 	"ee904ef5-e98b-4e75-98f2-b588348fe960": "Trombone",
 	#flutes
 	"e31b1703-d0e4-4c2e-bb6f-51303948df96": "Flute",
-	#harpischord, mellotron
+	#harpsichord, mellotron
 	"377e5ac5-9000-4452-b7d5-0a12101c1fc9": "Accordion",
 	"4025df3f-7297-4119-9576-7008db085a9e": "Accordion",
 	"67cd4619-21d8-4274-bd3c-449262368991": "Mellotron",
-	"80574c6e-726a-4683-8ce4-ed97e9d53a9d": "Harpischord",
+	"80574c6e-726a-4683-8ce4-ed97e9d53a9d": "Harpsichord",
 	"8b79e1ab-6760-4c9f-83d4-fcc0e9a32f47": "Mellotron",
 	"9af5bf3c-0639-44f7-957d-7bf55355734d": "Mellotron",
 	"a022ba02-a564-43cf-8ada-ee614f1daecc": "Mellotron",
 	"ac4a8e3e-20dd-4532-862d-f68a1e2a6407": "Accordion",
 	"ad0dff82-4db2-4fe3-b803-d300d7535384": "Marimba",
-	"cb6caf6d-ad43-4af9-89c6-66db1e04c989": "Harpischord",
+	"cb6caf6d-ad43-4af9-89c6-66db1e04c989": "Harpsichord",
 	"d11887e8-1535-4ed0-b68b-875b48af5d35": "Accordion",
 	"d476ece8-de18-4001-a3bd-3f4ed60f8926": "Mellotron",
 	#other strings
@@ -216,7 +298,7 @@ MANUAL_MAPPINGS: dict[str, str] = {
 	"15380cb1-e0d7-4346-bf3d-77cda2e1a767": "Electronic percussion",
 	"2bc1bc70-118f-4f0e-b590-e9f90d8fa6b7": "Drum and bell",
 	"5abe0358-e438-4338-8ae3-577831fcfb6d": "Bell",
-	"66cbd7fc-2448-4fc8-ba7b-ca16a4149d86": "taiko drums",
+	"66cbd7fc-2448-4fc8-ba7b-ca16a4149d86": "Taiko drums",
 	"7ffe7c87-891b-40d0-9112-93c124a97a56": "Marimba",
 	"873f0d7f-1098-4719-b7f7-de917dc28749": "Bongos",
 	"8f9f4acc-af7a-4ee5-a2af-88d65b3aefc6": "Steel pan drum",

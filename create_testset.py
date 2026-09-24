@@ -1,106 +1,53 @@
 import json
+import argparse
 import numpy as np
 import pandas as pd
-import soundfile as sf
-from tqdm import tqdm
-
+from typing import Any
+from pathlib import Path
+from collections import Counter
+from dataset_utils import save_dataset
 from config import (
 	DATASET_PATH,
-	EVAL_SIZE,
+	EVAL_PAIRS,
+	EVAL_PAIRS_PER_SONG,
 	EVAL_SONGS,
-	GENRE_BALANCE,
+	EPS,
 	MAX_EVAL_FRACTION_PER_GENRE,
-	MAX_EVAL_ROWS_PER_SONG,
 	MAX_EVAL_SONGS_PER_GENRE,
-	MIN_PER_INSTRUMENT_TYPE,
-	MIN_PER_STEM_COMBO,
 	ROW_PENALTY,
 	SEED,
-	SKIP_SILENCE_CHECK,
-	STEMS,
-	MOISES_FOLDER,
-	MAX_LENGTH,
-	SILENCE_THRESHOLD,
+	STEM_BALANCE,
 )
 
-INSTRUMENT_TYPES = sorted({instrument for group in STEMS.values() for instrument in group})
+PAIR_OPERATIONS = {"ADD", "REMOVE", "ACCOMPANY", "EXTRACT"}
 
-def added_instrument_types(row: pd.Series) -> frozenset[str]:
-	small_ids = {instrument["id"] for instrument in json.loads(row["small_instrument_data"])}
-	large = json.loads(row["large_instrument_data"])
-	return frozenset(instrument["type"] for instrument in large if instrument["id"] not in small_ids)
+def get_pairs(df: pd.DataFrame) -> pd.DataFrame:
+	rows = df.loc[df["operation"].isin(list(PAIR_OPERATIONS))]
+	has = rows.groupby("pair_id")["operation"].nunique()
+	usable = has.index[has == len(PAIR_OPERATIONS)]
 
-def add_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
-	df = df.copy()
-	df["num_stems"] = df["small_stem"].apply(lambda x: len(x.split("_")))
-	df["combo_type"] = df["small_stem"] + df["large_stem"]
-	df["added_types"] = df.apply(added_instrument_types, axis=1)
-	return df
-
-def compute_song_silence(song_ids: set[str]) -> dict[str, dict[str, bool]]:
-	song_silence: dict[str, dict[str, bool]] = {}
-	for song_id in tqdm(sorted(song_ids), desc="Checking silence", unit="song"):
-		song_folder = MOISES_FOLDER / song_id
-		track_silence: dict[str, bool] = {}
-		for track in song_folder.rglob("*.wav"):
-			audio, _ = sf.read(str(track), frames=MAX_LENGTH)
-			rms = np.sqrt(np.mean(audio ** 2))
-			track_silence[track.stem] = rms < SILENCE_THRESHOLD
-		song_silence[song_id] = track_silence
-	return song_silence
-
-def get_non_silent_entries(df: pd.DataFrame, song_silence: dict[str, dict[str, bool]]) -> pd.Index:
-	non_silent = []
-	for index, row in df.iterrows():
-		silence_map = song_silence.get(row["song_id"], {})
-		small_ids = set(inst["id"] for inst in json.loads(row["small_instrument_data"]))
-		large_ids = set(inst["id"] for inst in json.loads(row["large_instrument_data"]))
-		delta_ids = large_ids - small_ids
-
-		small_has_audio = any(not silence_map.get(track_id, True) for track_id in small_ids)
-		delta_has_audio = any(not silence_map.get(track_id, True) for track_id in delta_ids)
-
-		if small_has_audio and delta_has_audio:
-			non_silent.append(index)
-	return pd.Index(non_silent)
-
-def group_songs(df: pd.DataFrame) -> pd.DataFrame:
-	def instruments(series: pd.Series) -> frozenset[str]:
-		names = (name.strip() for entry in series for name in str(entry).split(","))
-		return frozenset(name for name in names if name)
-
-	grouped = df.groupby("song_id")
-	return pd.DataFrame({
-		"genre": grouped["genre"].first(),
-		"num_rows": grouped.size(),
-		"stems": grouped["large_stem"].apply(lambda s: frozenset(s)),
-		"instruments": grouped["changed_instruments"].apply(instruments),
-	})
+	pairs = df.loc[(df["operation"] == "ADD") & df["pair_id"].isin(usable)].copy()
+	pairs = pairs.set_index("pair_id")
+	pairs["num_stems"] = pairs["input_stem"].apply(lambda stem: len(stem.split("_")))
+	pairs["added_types"] = pairs["edit_instrument_data"].apply(
+		lambda data: frozenset(instrument["type"] for instrument in json.loads(data))
+	)
+	return pairs
 
 def allocate_genres(genre_counts: dict[str, int], budget: int) -> dict[str, int]:
 	keys = sorted(genre_counts)
 	counts = np.array([genre_counts[key] for key in keys], dtype=float)
-	caps = np.maximum(np.floor(counts * MAX_EVAL_FRACTION_PER_GENRE), 1.0)
-	caps = np.minimum(caps, counts)
-	caps = np.minimum(caps, MAX_EVAL_SONGS_PER_GENRE)
+	caps = np.clip(np.floor(counts * MAX_EVAL_FRACTION_PER_GENRE), 1.0, np.minimum(counts, MAX_EVAL_SONGS_PER_GENRE))
 
-	allocation = np.zeros(len(keys))
+	allocation = np.zeros(len(keys), dtype=int)
 	remaining = min(budget, int(caps.sum()))
 	while remaining > 0:
-		headroom = caps - allocation
-		available_songs = headroom > 0
-		if not available_songs.any():
-			break
-		weights = np.where(available_songs, counts ** GENRE_BALANCE, 0.0)
-		share = np.minimum(np.floor(remaining * weights / weights.sum()), headroom)
-		open_genres = np.flatnonzero(available_songs)
+		open_genres = np.flatnonzero(allocation < caps)
 		order = open_genres[np.argsort(-counts[open_genres])]
-		for i in order[:remaining]:
-			share[i] = 1
-		allocation += share
-		remaining -= int(share.sum())
+		allocation[order[:remaining]] += 1
+		remaining -= min(remaining, len(order))
 
-	return dict(zip(keys, allocation.astype(int).tolist()))
+	return dict(zip(keys, allocation.tolist()))
 
 def select_songs(
 	songs: pd.DataFrame,
@@ -109,201 +56,167 @@ def select_songs(
 	feature_counts: dict[str, int],
 ) -> list[str]:
 	candidates = list(songs.index)
+	features = songs["features"].to_dict()
+	penalty = (songs["num_rows"] ** ROW_PENALTY).to_dict()
 	selected: list[str] = []
 
 	for _ in range(min(budget, len(candidates))):
-		scores = []
-		for song_id in candidates:
-			row = songs.loc[song_id]
-			features = set(row["stems"]) | set(row["instruments"])
-			weight = sum(1.0 / (1.0 + feature_counts.get(feature, 0)) for feature in features)
-			scores.append(weight / (row["num_rows"] ** ROW_PENALTY))
-
-		scores = np.array(scores)
-		best = int(rng.choice(np.flatnonzero(scores >= scores.max() - 1e-6)))
+		scores = np.array([
+			sum(1.0 / (1.0 + feature_counts.get(feature, 0)) for feature in features[song_id]) / penalty[song_id]
+			for song_id in candidates
+		])
+		best = int(rng.choice(np.flatnonzero(scores >= scores.max() - EPS)))
 		song_id = candidates.pop(best)
 		selected.append(song_id)
-
-		row = songs.loc[song_id]
-		for feature in set(row["stems"]) | set(row["instruments"]):
+		for feature in features[song_id]:
 			feature_counts[feature] = feature_counts.get(feature, 0) + 1
 
 	return selected
 
 def select_eval_songs(df: pd.DataFrame, rng: np.random.Generator) -> set[str]:
-	songs = group_songs(df)
-	genres = allocate_genres(songs.groupby("genre").size().to_dict(), EVAL_SONGS)
+	grouped = df.groupby("song_id")
+	stems = grouped["target_stem"].apply(frozenset)
+	instruments = grouped["added_types"].apply(lambda series: frozenset().union(*series))
+	songs = pd.DataFrame({
+		"genre": grouped["genre"].first(),
+		"num_rows": grouped.size(),
+		"features": [song_stems | song_types for song_stems, song_types in zip(stems, instruments)],
+	})
+	genre_counts = {str(genre): int(n) for genre, n in songs.groupby("genre").size().items()}
+	genres = allocate_genres(genre_counts, EVAL_SONGS)
 
 	feature_counts: dict[str, int] = {}
 	selected: set[str] = set()
 	for genre in sorted(genres, key=lambda g: genres[g]):
-		group = songs[songs["genre"] == genre]
+		group = songs.loc[songs["genre"] == genre]
 		chosen = select_songs(group, genres[genre], rng, feature_counts)
 		selected.update(chosen)
-
-	print(f"Selected {len(selected)} eval songs out of {len(songs)}")
-	for genre in sorted(genres):
-		print(f"  {genre}: {genres[genre]}/{(songs['genre'] == genre).sum()}")
 	return selected
 
-def get_guaranteed_minimum_combos(df: pd.DataFrame, rng: np.random.Generator) -> set[int]:
-	selected: set[int] = set()
-	single_stem_rows = df[df["num_stems"] == 1]
+def allocate_pairs(df: pd.DataFrame, rng: np.random.Generator) -> dict[str, int]:
+	grouped = df.groupby("song_id")
+	available = {str(song): int(n) for song, n in grouped["input_file"].nunique().items()}
+	genres = grouped["genre"].first().to_dict()
+	quota = {song: min(EVAL_PAIRS_PER_SONG, n) for song, n in sorted(available.items())}
 
-	for _, group in single_stem_rows.groupby("combo_type"):
-		n = min(MIN_PER_STEM_COMBO, len(group))
-		chosen = rng.choice(group.index, size=n, replace=False)
-		selected.update(chosen)
-
-	return selected
-
-def get_guaranteed_minimum_types(
-	df: pd.DataFrame,
-	guaranteed: set[int],
-	rng: np.random.Generator,
-) -> set[int]:
-	counts: dict[str, int] = {instrument: 0 for instrument in INSTRUMENT_TYPES}
-	for index in guaranteed:
-		for instrument in df.loc[index, "added_types"]:
-			counts[instrument] += 1
-
-	candidates = {
-		instrument: df.index[df["added_types"].apply(lambda types: instrument in types)]
-		for instrument in INSTRUMENT_TYPES
-	}
-
-	for instrument in sorted(INSTRUMENT_TYPES, key=lambda i: len(candidates[i])):
-		available = candidates[instrument]
-		needed = min(MIN_PER_INSTRUMENT_TYPE, len(available)) - counts[instrument]
-		if needed <= 0:
-			continue
-
-		per_song: dict[str, int] = {}
-		for index in guaranteed:
-			song_id = df.loc[index, "song_id"]
-			per_song[song_id] = per_song.get(song_id, 0) + 1
-
-		pool = [index for index in available if index not in guaranteed]
-		pool.sort(key=lambda index: (per_song.get(df.loc[index, "song_id"], 0), rng.random()))
-		for index in pool[:needed]:
-			guaranteed.add(int(index))
-			for other in df.loc[index, "added_types"]:
-				counts[other] += 1
-
-	return guaranteed
-
-def get_guaranteed_minimum_tracks(
-	df: pd.DataFrame,
-	guaranteed: set[int],
-	rng: np.random.Generator,
-) -> set[int]:
-	for _, group in df.groupby("song_id"):
-		if not guaranteed.intersection(group.index):
-			guaranteed.add(int(rng.choice(group.index)))
-	return guaranteed
-
-def allocate_evenly(group_counts: dict, budget: int, cap: int | None = None) -> dict:
-	keys = sorted(group_counts.keys())
-	counts = np.array([group_counts[key] for key in keys])
-	if cap is not None:
-		counts = np.minimum(counts, cap)
-	allocation = np.minimum(budget // len(keys), counts)
-
-	remainder = budget - allocation.sum()
-	for i in np.argsort(allocation - counts):
-		if remainder <= 0:
+	step = 1 if sum(quota.values()) < EVAL_PAIRS else -1
+	while sum(quota.values()) != EVAL_PAIRS:
+		songs = [song for song, n in quota.items() if (n < available[song] if step > 0 else n > 0)]
+		if not songs:
 			break
-		add = min(int(counts[i] - allocation[i]), remainder)
-		allocation[i] += add
-		remainder -= add
+		totals = Counter()
+		for song, n in quota.items():
+			totals[genres[song]] += n
+		keys = {song: (step * quota[song], step * totals[genres[song]]) for song in songs}
+		best = min(keys.values())
+		candidates = [song for song in songs if keys[song] == best]
+		quota[candidates[int(rng.integers(len(candidates)))]] += step
 
-	return dict(zip(keys, allocation.tolist()))
+	return quota
 
-def sample_stratified(
+def select_pairs(
 	df: pd.DataFrame,
-	budget: int,
+	quota: dict[str, int],
 	rng: np.random.Generator,
-	stratify_by: list[str] = ["song_id", "large_stem", "num_stems"],
-) -> set[int]:
-	if not stratify_by:
-		n = min(budget, len(df))
-		return set(rng.choice(df.index, size=n, replace=False))
+) -> list[int]:
+	stem_weight = df["target_stem"].value_counts() ** STEM_BALANCE
+	stem_target = (stem_weight / stem_weight.sum() * sum(quota.values())).clip(lower=1.0)
 
-	column, *rest = stratify_by
-	cap = MAX_EVAL_ROWS_PER_SONG if column == "song_id" else None
-	allocation = allocate_evenly(df.groupby(column).size().to_dict(), budget, cap)
-	selected: set[int] = set()
-	for key, group in df.groupby(column):
-		key_budget = allocation.get(key, 0)
-		if key_budget == 0:
-			continue
-		selected.update(sample_stratified(group, key_budget, rng, rest))
+	counts: Counter = Counter()
+	stem_counts: Counter = Counter()
+	picked: Counter = Counter()
+	pools = {song: list(df.index[df["song_id"] == song]) for song in quota}
+	features: dict[int, tuple[set[str], set[str]]] = {}
+	row: Any
+	for row in df.itertuples():
+		partial = "partial" in row.input_file or "partial" in row.target_file
+		mix = {f"backing:{row.input_stem}", f"size:{row.num_stems}", f"partial:{partial}"}
+		features[row.Index] = (mix, {f"type:{type}" for type in row.added_types})
+
+	def score(index: int) -> float:
+		stem = df.at[index, "target_stem"]
+		mix, types = features[index]
+		stem_score = max(0.0, 1.0 - stem_counts[stem] / stem_target[stem])
+		mix_score = sum(1.0 / (1.0 + counts[feature]) for feature in mix)
+		type_score = sum(1.0 / (1.0 + counts[feature]) for feature in types) / max(len(types), 1)
+		return 2.0 * stem_score + mix_score + type_score
+
+	selected: list[int] = []
+	for _ in range(max(quota.values())):
+		for song in rng.permutation(sorted(quota)):
+			if picked[song] >= quota[song] or not pools[song]:
+				continue
+			scores = np.array([score(index) for index in pools[song]])
+			best = np.flatnonzero(scores >= scores.max() - EPS)
+			index = pools[song].pop(int(rng.choice(best)))
+			small_mix = df.at[index, "input_file"]
+			pools[song] = [other for other in pools[song] if df.at[other, "input_file"] != small_mix]
+			selected.append(index)
+			picked[song] += 1
+			stem_counts[df.at[index, "target_stem"]] += 1
+			mix, types = features[index]
+			counts.update(mix | types)
 
 	return selected
 
-def stratified_fill(
-	df: pd.DataFrame,
-	guaranteed: set[int],
-	total: int,
-	rng: np.random.Generator,
-) -> set[int]:
-	df_remaining = df.drop(index=list(guaranteed))
-	budget = total - len(guaranteed)
+def holdout_songs(holdout_path: Path, songs: set[str]) -> set[str]:
+	holdout = pd.read_parquet(holdout_path)
+	if "split" not in holdout.columns:
+		raise ValueError(f"--from-holdout needs a split column in {holdout_path}")
+	eval_songs = set(holdout.loc[holdout["split"].isin(["eval", "eval_holdout"]), "song_id"])
+	if not eval_songs:
+		raise ValueError(f"No eval or eval_holdout songs in {holdout_path}")
+	missing = eval_songs - songs
+	if missing:
+		print(f"Warning: {len(missing)} eval songs of {holdout_path} are not in the dataset")
+	print(f"Using the {len(eval_songs)} eval songs of {holdout_path}")
+	return eval_songs
 
-	selected = guaranteed.union(sample_stratified(df_remaining, budget, rng))
+def eval_candidates(pairs: pd.DataFrame, eval_songs: set[str]) -> pd.DataFrame:
+	def audible(data: str) -> bool:
+		return any(instrument.get("active") for instrument in json.loads(data))
 
-	remainder = total - len(selected)
-	if remainder == 0:
-		return selected
-		
-	unselected = df.loc[df.index.difference(pd.Index(list(selected)))]
-	if unselected.empty:
-		return selected
-	
-	fill = min(remainder, len(unselected))
-	chosen = rng.choice(unselected.index, size=fill, replace=False)
-	selected.update(chosen)
-	return selected
+	in_songs = pairs["song_id"].isin(list(eval_songs))
+	has_audio = pairs["input_instrument_data"].map(audible) & pairs["edit_instrument_data"].map(audible)
+	candidates = pairs.loc[in_songs & has_audio]
+	print(f"Filtered {in_songs.sum()} -> {len(candidates)} non-silent pairs")
+	return candidates
 
-def create_testset():
-	df = pd.read_parquet(DATASET_PATH)
+def create_testset(dataset_path: Path = DATASET_PATH, holdout_path: Path | None = None):
+	df = pd.read_parquet(dataset_path)
 	rng = np.random.default_rng(SEED)
 
-	df_derived = add_derived_columns(df)
-	df_eligible = df_derived[df["remove_instruction"].notna()]
+	pairs = get_pairs(df)
 
-	if SKIP_SILENCE_CHECK:
-		print(f"Skipping silence check on {len(df_eligible)} eligible entries")
+	if holdout_path is None:
+		eval_songs = select_eval_songs(pairs, rng)
 	else:
-		song_ids = set(df_eligible["song_id"].unique())
-		song_silence = compute_song_silence(song_ids)
-		non_silent_entires = get_non_silent_entries(df_eligible, song_silence)
-		print(f"Filtered {len(df_eligible)} -> {len(non_silent_entires)} non-silent entries")
-		df_eligible = df_eligible.loc[non_silent_entires]
+		eval_songs = holdout_songs(holdout_path, set(df["song_id"]))
 
-	eval_songs = select_eval_songs(df_eligible, rng)
-	df_eligible = df_eligible[df_eligible["song_id"].isin(eval_songs)]
-	print(f"Sampling {EVAL_SIZE} eval rows from {len(df_eligible)} rows in {len(eval_songs)} songs")
-
-	guaranteed = get_guaranteed_minimum_combos(df_eligible, rng)
-	print(f"  {len(guaranteed)} rows reserved for stem combos")
-	guaranteed = get_guaranteed_minimum_types(df_eligible, guaranteed, rng)
-	print(f"  {len(guaranteed)} rows after instrument type minimums")
-	guaranteed = get_guaranteed_minimum_tracks(df_eligible, guaranteed, rng)
-	print(f"  {len(guaranteed)} rows after per song minimums")
-	selected = stratified_fill(df_eligible, guaranteed, EVAL_SIZE, rng)
+	pairs = eval_candidates(pairs, eval_songs)
+	selected = select_pairs(pairs, allocate_pairs(pairs, rng), rng)
 
 	df["split"] = "train"
-	df.loc[df["song_id"].isin(eval_songs), "split"] = "eval_holdout"
-	df.loc[list(selected), "split"] = "eval"
+	df.loc[df["song_id"].isin(list(eval_songs)), "split"] = "eval_holdout"
+	small_mixes = set(zip(pairs.loc[selected, "song_id"], pairs.loc[selected, "input_file"]))
+	picked_mix = pd.Series([mix in small_mixes for mix in zip(df["song_id"], df["input_file"])], index=df.index)
+	df.loc[df["operation"].isin(list(PAIR_OPERATIONS)) & df["pair_id"].isin(selected), "split"] = "eval"
+	df.loc[(df["operation"] == "COMPLETE") & picked_mix, "split"] = "eval"
 
-	df.to_parquet(DATASET_PATH, index=False)
-	print(f"Saved to {DATASET_PATH}")
-	for split, count in df["split"].value_counts().items():
-		print(f"  {split}: {count}")
+	save_dataset(df, dataset_path)
+	print(f"Saved {(df['split'] == 'eval').sum()} evaluation samples from {len(eval_songs)} songs")
 
-	per_song = df[df["split"] == "eval"].groupby("song_id").size()
-	print(f"Eval rows per song: min {per_song.min()} median {per_song.median():.0f} max {per_song.max()}")
+def main():
+	parser = argparse.ArgumentParser(description="Select the evaluation set of the MARI dataset.")
+	parser.add_argument("--dataset", type=Path, default=DATASET_PATH, help="Parquet file to read and update.")
+	parser.add_argument(
+		"--from-holdout", type=Path, nargs="?", const=True, default=None, metavar="PARQUET",
+		help="Keep the eval songs from another parquet file and only pick the eval pairs. Uses --dataset parquet when no file is given.",
+	)
+	args = parser.parse_args()
+
+	holdout = args.dataset if args.from_holdout is True else args.from_holdout
+	create_testset(dataset_path=args.dataset, holdout_path=holdout)
 
 if __name__ == "__main__":
-	create_testset()
+	main()

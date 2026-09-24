@@ -1,32 +1,29 @@
 import json
 import random
-import numpy as np
+import argparse
 import pandas as pd
-import soundfile as sf
 from tqdm import tqdm
 from pathlib import Path
-from collections import Counter
 from itertools import combinations
-
-from audio_utils import mix_tracks
-from generate_instructions import generate_instruction
+from audio_utils import TrackInfo, balance_song
+from dataset_utils import save_dataset
 from config import (
-	MOISES_FOLDER, SONGS_FOLDER, DATASET_PATH, MAX_LENGTH, SEED,
-	STEMS, TAXONOMY_MAPPING, MANUAL_MAPPINGS,
-	MAX_STEMS_MIX, MAX_PARTIALS_PER_STEM, MAX_PARTIAL_COMBO_SIZE
+	MOISES_FOLDER,
+	PAIRS_PATH,
+	SEED,
+	SAMPLE_RATE,
+	STEMS,
+	MAX_STEMS_MIX,
+	MAX_PARTIALS_PER_STEM,
+	MAX_PARTIAL_COMBO_SIZE
 )
 
-MAX_COMBO_SIZE = min(MAX_STEMS_MIX, len(STEMS))
+TRACKTYPE_STEM: dict[str, str] = {
+	instrument: stem for stem, instruments in STEMS.items() for instrument in instruments
+}
 
-TrackInfo = list[tuple[str, str, Path]]
-
-tracktype_to_stem: dict[str, str] = {}
-for stem, instruments in STEMS.items():
-	for instrument in instruments:
-		tracktype_to_stem[instrument] = stem
-
-def get_track_info(song_folder: Path, data: dict) -> dict[str, TrackInfo]:
-	stem_tracks: dict[str, TrackInfo] = {stem: [] for stem in list(STEMS.keys())}
+def get_track_info(song_folder: Path, data: dict) -> dict[str, list[TrackInfo]]:
+	stem_tracks: dict[str, list[TrackInfo]] = {stem: [] for stem in STEMS}
 	for stem_data in data.get("stems", []):
 		stem_name = stem_data["stemName"]
 		for track in stem_data.get("tracks", []):
@@ -34,140 +31,83 @@ def get_track_info(song_folder: Path, data: dict) -> dict[str, TrackInfo]:
 				continue
 			track_type = track.get("trackType")
 			track_id = track.get("id")
-			if track_type and track_id and track_type in tracktype_to_stem:
-				category = tracktype_to_stem[track_type]
-				path = song_folder / stem_name / f"{track_id}.wav"
-				if path.exists():
-					stem_tracks[category].append((track_type, track_id, path))
+			if not track_id or track_type not in TRACKTYPE_STEM:
+				continue
+			path = song_folder / stem_name / f"{track_id}.wav"
+			if not path.exists():
+				continue
+			stem_tracks[TRACKTYPE_STEM[track_type]].append((track_type, track_id, path))
 	return stem_tracks
 
-def get_instrument_name(track_type: str, track_id: str) -> str:
-	override = MANUAL_MAPPINGS.get(track_id)
-	if override:
-		return override
-	return random.choice(TAXONOMY_MAPPING.get(track_type, [track_type]))
+def plan_song_files(
+	genre: str,
+	stem_tracks: dict[str, list[TrackInfo]],
+) -> tuple[dict[str, dict], dict[tuple[str, ...], str], dict[tuple[tuple[str, ...], str, int], str], float, float]:
+	all_tracks = [track for stem in stem_tracks.values() for track in stem]
+	if not all_tracks:
+		return {}, {}, {}, 0.0, 0.0
+	audio, gains, song_scale = balance_song(all_tracks, genre)
+	if not audio:
+		return {}, {}, {}, 0.0, 0.0
 
-def load_tracks(paths: list[Path]) -> tuple[list[np.ndarray], int]:
-	tracks_samples = []
-	sample_rate = None
-	for path in paths:
-		audio, file_sample_rate = sf.read(path, frames=MAX_LENGTH)
-		if sample_rate is None:
-			sample_rate = file_sample_rate
-		tracks_samples.append(audio)
-		tracks_samples.append(np.zeros((2,2)))
-	return tracks_samples, sample_rate
-
-def create_stem_files(
-	song_id: str,
-	stem_tracks: dict[str, TrackInfo],
-	output_folder: Path,
-) -> tuple[dict[str, dict], dict[tuple[str, ...], str], dict[tuple[tuple[str, ...], str, int], str]]:
-	song_folder = output_folder / song_id
-	song_folder.mkdir(parents=True, exist_ok=True)
+	duration = max(track.shape[0] for track in audio.values()) / SAMPLE_RATE
 
 	stem_info: dict[str, dict] = {}
-	stem_mixes: dict[str, np.ndarray] = {}
-	partial_stem_mixes: dict[str, list[np.ndarray]] = {}
-	sample_rate = None
-
-	for stem, tracks in tqdm(stem_tracks.items(), desc="Mixing base stems", unit="stem", position=1, leave=False):
+	for stem, tracks in stem_tracks.items():
 		if not tracks:
 			continue
-		track_types = [track[0] for track in tracks]
-		track_ids = [track[1] for track in tracks]
-		track_paths = [track[2] for track in tracks]
 
-		tracks_samples, sample_rate = load_tracks(track_paths)
-		stem_file_name = f"{stem}.wav"
-		stem_path = song_folder / stem_file_name
-
-		if stem_path.exists():
-			primary_mix, sample_rate = sf.read(stem_path)
-		else:
-			primary_mix = mix_tracks(tracks_samples)
-			sf.write(str(stem_path), primary_mix, sample_rate)
-		primary_mix = mix_tracks(tracks_samples)
-		stem_mixes[stem] = primary_mix
-
-		instruments = [{"type": type, "id": id} for type, id in zip(track_types, track_ids)]
-
+		instruments = [
+			{"type": track_type, "id": track_id, **gains.get(track_id, {})}
+			for track_type, track_id, _ in tracks
+		]
 		info: dict = {
-			"file_name": stem_file_name,
+			"file_name": f"{stem}.wav",
 			"instruments": instruments,
 		}
-
-		if len(tracks) >= 2:
-			max_possible = min(MAX_PARTIALS_PER_STEM, 2 ** len(tracks) - 2)
-			seen: set[tuple[int, ...]] = set()
-			partials: list[dict] = []
-			p_mixes: list[np.ndarray] = []
-
-			for _ in range(max_possible * 10):
-				if len(partials) >= max_possible:
-					break
-				k = random.randint(1, len(tracks) - 1)
-				subset = tuple(sorted(random.sample(range(len(tracks)), k)))
-				if subset in seen:
-					continue
-				seen.add(subset)
-
-				idx = len(partials)
-				partial_file_name = f"{stem}_partial_{idx}.wav"
-				partial_path = song_folder / partial_file_name
-				if not partial_path.exists():
-					partial_mix = mix_tracks([tracks_samples[i] for i in subset])
-					sf.write(str(partial_path), partial_mix, sample_rate)
-				p_mixes.append(mix_tracks([tracks_samples[i] for i in subset]))
-
-				partials.append({
-					"file_name": partial_file_name,
-					"instruments": [instruments[i] for i in subset],
-					"delta_instruments": [instruments[i] for i in range(len(tracks)) if i not in subset],
-				})
-
-			info["partials"] = partials
-			partial_stem_mixes[stem] = p_mixes
-
 		stem_info[stem] = info
+		if len(tracks) < 2:
+			continue
 
-	combo_files: dict[tuple[str, ...], str] = {}
-	stem_keys = sorted(stem_mixes.keys())
-	for n in tqdm(range(2, MAX_COMBO_SIZE + 1), desc="Mixing stems", unit="stem", position=1, leave=False):
-		for combo in combinations(stem_keys, n):
-			combo_files[combo] = f"{'_'.join(combo)}.wav"
-			combo_path = song_folder / combo_files[combo]
-			if not combo_path.exists():
-				combo_mix = mix_tracks([stem_mixes[s] for s in combo])
-				sf.write(str(combo_path), combo_mix, sample_rate)
+		max_possible = min(MAX_PARTIALS_PER_STEM, 2 ** len(tracks) - 2)
+		seen: set[tuple[int, ...]] = set()
+		partials: list[dict] = []
+
+		for _ in range(max_possible * 10):
+			if len(partials) >= max_possible:
+				break
+
+			k = random.randint(1, len(tracks) - 1)
+			subset = tuple(sorted(random.sample(range(len(tracks)), k)))
+			if subset in seen:
+				continue
+			seen.add(subset)
+
+			partials.append({
+				"file_name": f"{stem}_partial_{len(partials)}.wav",
+				"instruments": [instruments[i] for i in subset],
+				"delta_instruments": [instruments[i] for i in range(len(tracks)) if i not in subset],
+			})
+
+		info["partials"] = partials
+
+	stem_keys = sorted(stem_info)
+	combo_files: dict[tuple[str, ...], str] = {
+		combo: f"{'_'.join(combo)}.wav"
+		for n in range(1, MAX_STEMS_MIX + 1)
+		for combo in combinations(stem_keys, n)
+	}
 
 	partial_combo_files: dict[tuple[tuple[str, ...], str, int], str] = {}
-	for n in tqdm(range(2, min(MAX_PARTIAL_COMBO_SIZE, MAX_COMBO_SIZE) + 1), desc="Mixing partial stems", unit="stem", position=1, leave=False):
+	for n in range(2, min(MAX_PARTIAL_COMBO_SIZE, MAX_STEMS_MIX) + 1):
 		for combo in combinations(stem_keys, n):
 			for added_stem in combo:
-				if added_stem not in partial_stem_mixes:
-					continue
 				remaining = tuple(s for s in combo if s != added_stem)
-				for p_idx in range(len(partial_stem_mixes[added_stem])):
+				for p_idx in range(len(stem_info[added_stem].get("partials", []))):
 					key = (remaining, added_stem, p_idx)
-					filename = f"{'_'.join(remaining)}_{added_stem}_partial_{p_idx}.wav"
-					partial_combo_files[key] = filename
-					partial_combo_path = song_folder / filename
-					if not partial_combo_path.exists():
-						parts = [stem_mixes[s] for s in remaining] + [partial_stem_mixes[added_stem][p_idx]]
-						sf.write(str(partial_combo_path), mix_tracks(parts), sample_rate)
+					partial_combo_files[key] = f"{'_'.join(remaining)}_{added_stem}_partial_{p_idx}.wav"
 
-	return stem_info, combo_files, partial_combo_files
-
-def get_instrument_names(instruments: list[dict]) -> list[str]:
-	counts = Counter((inst["type"], inst["id"]) for inst in instruments)
-	names = []
-	for (track_type, track_id), count in counts.items():
-		name = get_instrument_name(track_type, track_id)
-		if count > 1 and not name.endswith("s") and random.random() < 0.5:
-			name += "s"
-		names.append(name)
-	return names
+	return stem_info, combo_files, partial_combo_files, song_scale, duration
 
 def make_entry(
 	small_stem: str,
@@ -176,38 +116,20 @@ def make_entry(
 	large_file: str,
 	small_instruments: list[dict],
 	delta_instruments: list[dict],
-	genre: str,
 ) -> dict:
-	small_names = get_instrument_names(small_instruments)
-	instrument_names = get_instrument_names(delta_instruments)
-	genre = genre.replace("_", " ").capitalize()
-
-	entry: dict = {
+	return {
 		"small_stem": small_stem,
 		"large_stem": large_stem,
 		"small_file": small_file,
 		"large_file": large_file,
-		"small_instrument_data": small_instruments,
-		"large_instrument_data": small_instruments + delta_instruments,
-		"small_instruments": small_names,
-		"large_instruments": small_names + instrument_names,
-		"changed_instruments": instrument_names,
-		"add_instruction": generate_instruction("ADD", instrument_names, genre),
+		"small_instrument_data": json.dumps(small_instruments),
+		"large_instrument_data": json.dumps(small_instruments + delta_instruments),
 	}
-
-	delta_types = [instrument["type"] for instrument in delta_instruments]
-	small_types = [instrument["type"] for instrument in small_instruments]
- 
-	if set(delta_types) - set(small_types):
-		entry["remove_instruction"] = generate_instruction("REMOVE", instrument_names, genre)
-
-	return entry
 
 def build_entries(
 	stems: dict[str, dict],
 	combo_files: dict[tuple[str, ...], str],
-	partial_combo_files: dict,
-	genre: str,
+	partial_combo_files: dict[tuple[tuple[str, ...], str, int], str],
 ) -> list[dict]:
 	entries: list[dict] = []
 	stem_keys = sorted(stems.keys())
@@ -221,30 +143,20 @@ def build_entries(
 				stems[stem]["file_name"],
 				partial["instruments"],
 				partial["delta_instruments"],
-				genre,
 			))
 
 	def append_entry(remaining: tuple[str, ...], added_stem: str, large_file: str, delta_instruments: list):
-		if len(remaining) == 1:
-			small_file = stems[remaining[0]]["file_name"]
-			small_label = remaining[0]
-		else:
-			small_file = combo_files[remaining]
-			small_label = "_".join(remaining)
 		small_instruments = [instrument for stem in remaining for instrument in stems[stem]["instruments"]]
-		entries.append(
-	  		make_entry(
-				small_label,
-				added_stem,
-				small_file,
-				large_file,
-				small_instruments,
-				delta_instruments,
-				genre,
-			)
-		)
+		entries.append(make_entry(
+			"_".join(remaining),
+			added_stem,
+			combo_files[remaining],
+			large_file,
+			small_instruments,
+			delta_instruments,
+		))
 
-	for n in range(2, MAX_COMBO_SIZE + 1):
+	for n in range(2, MAX_STEMS_MIX + 1):
 		for combo in combinations(stem_keys, n):
 			large_file = combo_files[combo]
 			for added_stem in combo:
@@ -257,11 +169,11 @@ def build_entries(
 
 	return entries
 
-def create_dataset():
+def create_dataset(dataset_path: Path = PAIRS_PATH):
 	random.seed(SEED)
-	SONGS_FOLDER.mkdir(parents=True, exist_ok=True)
 
-	all_songs: list[dict] = []
+	rows: list[dict] = []
+	songs = 0
 
 	for song_folder in tqdm(sorted(MOISES_FOLDER.iterdir()), desc="Processing songs", unit="song", position=0):
 		data_json = song_folder / "data.json"
@@ -277,38 +189,38 @@ def create_dataset():
 		genre = data.get("genre", "")
 
 		stem_tracks = get_track_info(song_folder, data)
-		stem_info, combo_files, partial_combo_files = create_stem_files(song_id, stem_tracks, SONGS_FOLDER)
-		entries = build_entries(stem_info, combo_files, partial_combo_files, genre)
-
-		all_songs.append({
-			"song_id": song_id,
-			"genre": genre,
-			"entries": entries,
-		})
-
-	rows = []
-	for song in all_songs:
-		for entry in song["entries"]:
+		stem_info, combo_files, partial_combo_files, song_scale, duration = plan_song_files(genre, stem_tracks)
+		if not stem_info:
+			print(f"Warning: Song {song_id} has no audible tracks. Skipping.")
+			continue
+		songs += 1
+		for entry in build_entries(stem_info, combo_files, partial_combo_files):
 			rows.append({
-				"song_id": song["song_id"],
-				"genre": song["genre"],
+				"song_id": song_id,
+				"genre": genre,
 				"small_stem": entry["small_stem"],
 				"large_stem": entry["large_stem"],
 				"small_file": entry["small_file"],
 				"large_file": entry["large_file"],
-				"small_instrument_data": json.dumps(entry["small_instrument_data"]),
-				"large_instrument_data": json.dumps(entry["large_instrument_data"]),
-				"small_instruments": ", ".join(entry["small_instruments"]),
-				"large_instruments": ", ".join(entry["large_instruments"]),
-				"changed_instruments": ", ".join(entry["changed_instruments"]),
-				"add_instruction": entry["add_instruction"],
-				"remove_instruction": entry.get("remove_instruction", None),
+				"small_instrument_data": entry["small_instrument_data"],
+				"large_instrument_data": entry["large_instrument_data"],
+				"duration_seconds": duration,
+				"sample_rate": SAMPLE_RATE,
+				"channels": 2,
+				"song_scale": song_scale,
 			})
 
 	df = pd.DataFrame(rows)
-	df.to_parquet(DATASET_PATH, index=False)
+	save_dataset(df, dataset_path)
 
-	print(f"\nSaved {len(all_songs)} songs and {len(df)} entries to {DATASET_PATH}")
+	print(f"\nSaved {songs} songs and {len(df)} entries to {dataset_path}")
+
+def main():
+	parser = argparse.ArgumentParser(description="Create the MARI pair parquet and the track gains from MoisesDB. compute_files.py writes the audio.")
+	parser.add_argument("--output", type=Path, default=PAIRS_PATH, help="Where to write the pair parquet.")
+	args = parser.parse_args()
+
+	create_dataset(dataset_path=args.output)
 
 if __name__ == "__main__":
-	create_dataset()
+	main()
