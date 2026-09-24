@@ -1,6 +1,5 @@
 import numpy as np
 import soundfile as sf
-from tqdm import tqdm
 from pathlib import Path
 from typing import Iterable
 from config import (
@@ -106,7 +105,7 @@ def compute_gains(
 		buses.setdefault(bus, []).append(track_id)
 
 	gains: dict[str, dict] = {}
-	for members in tqdm(buses.values(), desc="Balancing buses", unit="bus", position=1, leave=False):
+	for members in buses.values():
 		max_len = max(audio[member].shape[0] for member in members)
 		bus_sum = np.sum([pad_to(audio[member], max_len) for member in members], axis=0)
 		loudness = active_region_rms(bus_sum.mean(axis=1))
@@ -117,13 +116,7 @@ def compute_gains(
 			gains[member] = {"role": roles[member], "offset_db": offset, "gain": gain}
 
 	max_len = max(track.shape[0] for track in audio.values())
-	peak = peak_reference(
-		tqdm(
-			(audio[id] * np.float32(info["gain"]) for id, info in gains.items()),
-			total=len(gains), desc="Finding peak", unit="track", position=1, leave=False,
-		),
-		max_len,
-	)
+	peak = peak_reference((audio[id] * np.float32(info["gain"]) for id, info in gains.items()), max_len)
 	if peak < EPS:
 		return {}, 0.0
 
@@ -137,14 +130,14 @@ def balance_song(
 	genre: str,
 ) -> tuple[dict[str, np.ndarray], dict[str, dict], float]:
 	audio: dict[str, np.ndarray] = {}
-	for _, track_id, path in tqdm(tracks, desc="Loading tracks", unit="track", position=1, leave=False):
+	for _, track_id, path in tracks:
 		audio[track_id] = load_track(path)
 
 	gains, song_scale = compute_gains(tracks, audio, genre)
 	if not gains:
 		return {}, {}, 0.0
 
-	for track_id, info in tqdm(gains.items(), desc="Scaling tracks", unit="track", position=1, leave=False):
+	for track_id, info in gains.items():
 		audio[track_id] *= np.float32(info["gain"])
 		info["active"] = active_seconds(audio[track_id])
 	return audio, gains, song_scale

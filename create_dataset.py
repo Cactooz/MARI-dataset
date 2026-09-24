@@ -175,7 +175,7 @@ def create_dataset(dataset_path: Path = PAIRS_PATH):
 	rows: list[dict] = []
 	songs = 0
 
-	for song_folder in tqdm(sorted(MOISES_FOLDER.iterdir()), desc="Processing songs", unit="song", position=0):
+	for song_folder in tqdm(sorted(MOISES_FOLDER.iterdir()), desc="Processing songs", unit="song"):
 		data_json = song_folder / "data.json"
 
 		if not data_json.is_file():
